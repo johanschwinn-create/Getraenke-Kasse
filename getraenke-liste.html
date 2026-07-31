@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Getränke &amp; offene Beträge</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Arial, sans-serif;
+    background: #ffffff;
+    color: #232B26;
+  }
+  header {
+    background: #1B4332;
+    color: #ffffff;
+    padding: 28px 20px 22px;
+  }
+  header .eyebrow {
+    color: #C9A227;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 4px;
+  }
+  header h1 { margin: 0; font-size: 26px; }
+  main { max-width: 520px; margin: 0 auto; padding: 24px 20px 60px; }
+  .card {
+    border: 1px solid #e5e2da;
+    border-radius: 16px;
+    padding: 20px;
+    margin-bottom: 20px;
+    background: #ffffff;
+  }
+  .card h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #3A4750;
+    margin: 0 0 14px;
+  }
+  .row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid #f0eee8;
+    font-size: 15px;
+    gap: 8px;
+  }
+  .row:last-child { border-bottom: none; }
+  .amount { font-family: "Courier New", monospace; font-weight: 600; color: #B23A2E; }
+  .amount.paid { color: #1B4332; text-decoration: line-through; opacity: .6; }
+  input, button, select { font-family: inherit; font-size: 15px; }
+  input[type=text], input[type=password], input[type=date], select {
+    border: 1px solid #d8d5cc;
+    border-radius: 10px;
+    padding: 10px 12px;
+    width: 100%;
+    background: #fff;
+  }
+  button {
+    border: none;
+    border-radius: 10px;
+    padding: 10px 16px;
+    cursor: pointer;
+    font-weight: 600;
+  }
+  .btn-primary { background: #1B4332; color: #fff; }
+  .btn-gold { background: #C9A227; color: #1B4332; }
+  .btn-icon { background: transparent; color: #B23A2E; padding: 4px 8px; font-size: 16px; }
+  .flex-row { display: flex; gap: 8px; margin-bottom: 10px; }
+  .flex-row input, .flex-row select { flex: 1; min-width: 0; }
+  .small { font-size: 13px; color: #3A4750; }
+  .error { color: #B23A2E; font-size: 13px; margin-top: 8px; }
+  .status { font-size: 12px; color: #3A4750; margin-bottom: 12px; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; }
+  .tab-btn {
+    background: #f0eee8; color: #3A4750; padding: 8px 14px; border-radius: 999px;
+    font-size: 13px; font-weight: 600; cursor: pointer; border: none;
+  }
+  .tab-btn.active { background: #1B4332; color: #fff; }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+  .day-group { margin-bottom: 18px; }
+  .day-group h3 { font-size: 14px; margin: 0 0 8px; color: #1B4332; }
+  .entry-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid #f5f3ee; font-size: 14px; }
+  .entry-row:last-child { border-bottom: none; }
+  .entry-row .who { flex: 1; }
+  .entry-row .detail { color: #3A4750; font-size: 12px; }
+  .subtotal { text-align: right; font-size: 13px; color: #3A4750; margin-top: 4px; }
+  .checkbox-label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #3A4750; white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="eyebrow">Mannschaftskasse</div>
+  <h1>Getränke &amp; offene Beträge</h1>
+</header>
+
+<main>
+  <div class="card">
+    <h2>Wer steht noch offen?</h2>
+    <div id="publicList"><p class="small">Lade…</p></div>
+  </div>
+
+  <div class="card" id="pinCard">
+    <h2>🔒 Kassenwart-Bereich</h2>
+    <div class="flex-row">
+      <input type="password" id="pinInput" placeholder="PIN" inputmode="numeric" />
+      <button class="btn-primary" onclick="checkPin()">Entsperren</button>
+    </div>
+    <div class="error" id="pinError" style="display:none;">Falsche PIN.</div>
+  </div>
+
+  <div class="card" id="adminArea" style="display:none;">
+    <h2>🔓 Kassenwart-Bereich</h2>
+    <div class="status" id="statusLine">verbunden</div>
+
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="uebersicht" onclick="switchTab('uebersicht')">Übersicht</button>
+      <button class="tab-btn" data-tab="tage" onclick="switchTab('tage')">Nach Tag</button>
+      <button class="tab-btn" data-tab="eintragen" onclick="switchTab('eintragen')">Eintragen</button>
+      <button class="tab-btn" data-tab="spieler" onclick="switchTab('spieler')">Spieler</button>
+    </div>
+
+    <!-- Übersicht: offene Beträge gesamt pro Spieler -->
+    <div class="tab-panel active" id="panel-uebersicht">
+      <div id="adminOverview"></div>
+    </div>
+
+    <!-- Nach Tag -->
+    <div class="tab-panel" id="panel-tage">
+      <div id="dayList"></div>
+    </div>
+
+    <!-- Eintragen -->
+    <div class="tab-panel" id="panel-eintragen">
+      <div class="small" style="margin-bottom:8px;">Neuen Getränke-Eintrag hinzufügen</div>
+      <div class="flex-row">
+        <select id="entryPlayer"></select>
+      </div>
+      <div class="flex-row">
+        <select id="entryType">
+          <option value="alkoholfrei">alkoholfrei · 2,00 €</option>
+          <option value="alkoholisch">alkoholisch · 2,50 €</option>
+        </select>
+        <input type="text" id="entryQty" placeholder="Anzahl" value="1" style="max-width:90px;" />
+      </div>
+      <div class="flex-row">
+        <input type="date" id="entryDate" />
+      </div>
+      <button class="btn-gold" onclick="addEntry()" style="width:100%;">Eintragen</button>
+    </div>
+
+    <!-- Spieler verwalten -->
+    <div class="tab-panel" id="panel-spieler">
+      <div class="flex-row">
+        <input type="text" id="newPlayerName" placeholder="Name" />
+        <button class="btn-primary" onclick="addPlayer()">+</button>
+      </div>
+      <div id="playerList"></div>
+    </div>
+  </div>
+</main>
+
+<!-- Firebase -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script>
+  // ====== FIREBASE-KONFIGURATION ======
+  const firebaseConfig = {
+    apiKey: "AIzaSyDGnmJWfpnAquSkSQzDqpzBtq8ppvI4nfQ",
+    authDomain: "getraenke-djk-herren.firebaseapp.com",
+    databaseURL: "https://getraenke-djk-herren-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId: "getraenke-djk-herren",
+  };
+  // =====================================
+
+  const VALID_PINS = ["2509", "0303"]; // beide PINs sind gültig
+  const PRICE = { alkoholfrei: 2.0, alkoholisch: 2.5 };
+
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.database();
+  const playersRef = db.ref("players");
+  const entriesRef = db.ref("entries");
+
+  let players = {};   // { id: { name } }
+  let entries = {};   // { id: { playerId, date, type, qty, paid } }
+
+  function euro(n) {
+    return Number(n || 0).toLocaleString("de-DE", { style: "currency", currency: "EUR" });
+  }
+  function escapeHtml(str) {
+    const d = document.createElement("div");
+    d.textContent = str;
+    return d.innerHTML;
+  }
+  function amountOf(e) {
+    return (PRICE[e.type] || 0) * (e.qty || 0);
+  }
+  function nameOf(id) {
+    return players[id] ? players[id].name : "Unbekannt";
+  }
+  function todayStr() {
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  playersRef.on("value", (snap) => {
+    players = snap.val() || {};
+    renderAll();
+  });
+  entriesRef.on("value", (snap) => {
+    entries = snap.val() || {};
+    renderAll();
+  });
+
+  function renderAll() {
+    renderPublicList();
+    if (document.getElementById("adminArea").style.display !== "none") {
+      renderOverview();
+      renderDays();
+      renderPlayerSelect();
+      renderPlayerList();
+    }
+  }
+
+  // ---- Öffentliche Ansicht: offene Summe pro Spieler ----
+  function renderPublicList() {
+    const totals = {};
+    Object.values(entries).forEach((e) => {
+      if (e.paid) return;
+      totals[e.playerId] = (totals[e.playerId] || 0) + amountOf(e);
+    });
+    const el = document.getElementById("publicList");
+    const rows = Object.entries(totals)
+      .filter(([id, sum]) => sum > 0.001)
+      .map(([id, sum]) => ({ name: nameOf(id), sum }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    if (rows.length === 0) {
+      el.innerHTML = '<p class="small">Aktuell steht niemand mit offenem Betrag auf der Liste.</p>';
+      return;
+    }
+    el.innerHTML = rows.map((r) =>
+      `<div class="row"><span>${escapeHtml(r.name)}</span><span class="amount">${euro(r.sum)}</span></div>`
+    ).join("");
+  }
+
+  // ---- Admin: Übersicht offene Beträge ----
+  function renderOverview() {
+    const totals = {};
+    Object.keys(players).forEach((id) => (totals[id] = 0));
+    Object.values(entries).forEach((e) => {
+      if (e.paid) return;
+      totals[e.playerId] = (totals[e.playerId] || 0) + amountOf(e);
+    });
+    const el = document.getElementById("adminOverview");
+    const rows = Object.entries(totals).sort((a, b) => nameOf(a[0]).localeCompare(nameOf(b[0])));
+    if (rows.length === 0) {
+      el.innerHTML = '<p class="small">Noch keine Spieler angelegt.</p>';
+      return;
+    }
+    const gesamtOffen = Object.values(totals).reduce((a, b) => a + b, 0);
+    el.innerHTML = rows.map(([id, sum]) =>
+      `<div class="row"><span>${escapeHtml(nameOf(id))}</span><span class="amount${sum <= 0.001 ? " paid" : ""}">${euro(sum)}</span></div>`
+    ).join("") + `<div class="subtotal">Gesamt offen: <strong>${euro(gesamtOffen)}</strong></div>`;
+  }
+
+  // ---- Admin: Nach Tag ----
+  function renderDays() {
+    const el = document.getElementById("dayList");
+    const byDate = {};
+    Object.entries(entries).forEach(([id, e]) => {
+      byDate[e.date] = byDate[e.date] || [];
+      byDate[e.date].push({ id, ...e });
+    });
+    const dates = Object.keys(byDate).sort((a, b) => (a < b ? 1 : -1));
+    if (dates.length === 0) {
+      el.innerHTML = '<p class="small">Noch keine Einträge vorhanden.</p>';
+      return;
+    }
+    el.innerHTML = dates.map((date) => {
+      const dayEntries = byDate[date].sort((a, b) => nameOf(a.playerId).localeCompare(nameOf(b.playerId)));
+      const subtotal = dayEntries.reduce((s, e) => s + amountOf(e), 0);
+      const rows = dayEntries.map((e) => `
+        <div class="entry-row">
+          <span class="who">
+            ${escapeHtml(nameOf(e.playerId))}
+            <div class="detail">${e.qty}× ${e.type === "alkoholfrei" ? "alkoholfrei" : "alkoholisch"} · ${euro(amountOf(e))}</div>
+          </span>
+          <label class="checkbox-label">
+            <input type="checkbox" ${e.paid ? "checked" : ""} onchange="togglePaid('${e.id}', this.checked)" /> bezahlt
+          </label>
+          <button class="btn-icon" onclick="removeEntry('${e.id}')">✕</button>
+        </div>
+      `).join("");
+      return `
+        <div class="day-group">
+          <h3>${formatDate(date)}</h3>
+          ${rows}
+          <div class="subtotal">Tagessumme: ${euro(subtotal)}</div>
+        </div>
+      `;
+    }).join("");
+  }
+
+  function formatDate(iso) {
+    const d = new Date(iso + "T00:00:00");
+    return d.toLocaleDateString("de-DE", { weekday: "long", day: "2-digit", month: "2-digit", year: "numeric" });
+  }
+
+  // ---- Admin: Spieler-Dropdown für Eintrag ----
+  function renderPlayerSelect() {
+    const sel = document.getElementById("entryPlayer");
+    const current = sel.value;
+    const sorted = Object.entries(players).sort((a, b) => a[1].name.localeCompare(b[1].name));
+    sel.innerHTML = sorted.map(([id, p]) => `<option value="${id}">${escapeHtml(p.name)}</option>`).join("");
+    if (current) sel.value = current;
+  }
+
+  // ---- Admin: Spieler verwalten ----
+  function renderPlayerList() {
+    const el = document.getElementById("playerList");
+    const sorted = Object.entries(players).sort((a, b) => a[1].name.localeCompare(b[1].name));
+    if (sorted.length === 0) {
+      el.innerHTML = '<p class="small">Noch keine Spieler angelegt.</p>';
+      return;
+    }
+    el.innerHTML = sorted.map(([id, p]) => `
+      <div class="row">
+        <span>${escapeHtml(p.name)}</span>
+        <button class="btn-icon" onclick="removePlayer('${id}')">✕</button>
+      </div>
+    `).join("");
+  }
+
+  // ---- Aktionen ----
+  function checkPin() {
+    const val = document.getElementById("pinInput").value.trim();
+    const errEl = document.getElementById("pinError");
+    if (VALID_PINS.includes(val)) {
+      document.getElementById("pinCard").style.display = "none";
+      document.getElementById("adminArea").style.display = "block";
+      errEl.style.display = "none";
+      document.getElementById("entryDate").value = todayStr();
+      renderAll();
+    } else {
+      errEl.style.display = "block";
+    }
+  }
+
+  function switchTab(tab) {
+    document.querySelectorAll(".tab-btn").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+    document.querySelectorAll(".tab-panel").forEach((p) => p.classList.toggle("active", p.id === "panel-" + tab));
+  }
+
+  function addPlayer() {
+    const name = document.getElementById("newPlayerName").value.trim();
+    if (!name) return;
+    const id = playersRef.push().key;
+    playersRef.child(id).set({ name });
+    document.getElementById("newPlayerName").value = "";
+  }
+
+  function removePlayer(id) {
+    playersRef.child(id).remove();
+    Object.entries(entries).forEach(([eid, e]) => {
+      if (e.playerId === id) entriesRef.child(eid).remove();
+    });
+  }
+
+  function addEntry() {
+    const playerId = document.getElementById("entryPlayer").value;
+    const type = document.getElementById("entryType").value;
+    const qty = parseInt(document.getElementById("entryQty").value, 10);
+    const date = document.getElementById("entryDate").value || todayStr();
+    if (!playerId || !qty || qty < 1) return;
+    const id = entriesRef.push().key;
+    entriesRef.child(id).set({ playerId, type, qty, date, paid: false });
+    document.getElementById("entryQty").value = "1";
+  }
+
+  function togglePaid(id, paid) {
+    entriesRef.child(id).update({ paid });
+  }
+
+  function removeEntry(id) {
+    entriesRef.child(id).remove();
+  }
+</script>
+</body>
+</html>

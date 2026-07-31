@@ -177,12 +177,16 @@
 
       <div id="modeGetraenk">
         <div class="flex-row">
-          <select id="entryType">
-            <option value="alkoholfrei">alkoholfrei · 2,00 €</option>
-            <option value="alkoholisch">alkoholisch · 2,50 €</option>
-          </select>
-          <input type="text" id="entryQty" placeholder="Anzahl" value="1" style="max-width:90px;" />
+          <div style="flex:1;">
+            <div class="small" style="margin-bottom:4px;">alkoholfrei · 2,00 €</div>
+            <input type="text" id="entryQtyAf" placeholder="Anzahl" value="0" />
+          </div>
+          <div style="flex:1;">
+            <div class="small" style="margin-bottom:4px;">alkoholisch · 2,50 €</div>
+            <input type="text" id="entryQtyAl" placeholder="Anzahl" value="0" />
+          </div>
         </div>
+        <div class="small" style="margin-bottom:10px;">Beide Felder ausfüllbar, wenn ein Spieler z. B. 1 alkoholfreies und 1 alkoholisches Getränk zusammen bucht.</div>
       </div>
 
       <div id="modeManuell" style="display:none;">
@@ -339,29 +343,59 @@
       return;
     }
     el.innerHTML = dates.map((date) => {
-      const dayEntries = byDate[date].sort((a, b) => nameOf(a.playerId).localeCompare(nameOf(b.playerId)));
+      const dayEntries = byDate[date];
       const subtotal = dayEntries.reduce((s, e) => s + amountOf(e), 0);
       const verein = subtotal * 0.8;
       const kasse = subtotal * 0.2;
-      const rows = dayEntries.map((e) => {
-        const total = amountOf(e);
-        const paidAmt = paidAmountOf(e);
-        const rem = remainingOf(e);
-        const detailText = e.type === "manuell"
-          ? `Manueller Betrag${e.note ? " · " + escapeHtml(e.note) : ""} · ${euro(total)}`
-          : `${e.qty}× ${e.type === "alkoholfrei" ? "alkoholfrei" : "alkoholisch"} · ${euro(total)}`;
-        return `
-        <div class="entry-row">
-          <span class="who">
-            ${escapeHtml(nameOf(e.playerId))}
-            <div class="detail">${detailText}</div>
-            <div class="remaining-tag">noch offen: ${euro(rem)}</div>
-          </span>
-          <div class="pay-box">
-            <input type="text" value="${paidAmt.toFixed(2).replace(".", ",")}" onblur="updatePaidAmount('${e.id}', this.value)" title="Gezahlter Betrag" />
-            <button class="btn-link" onclick="markFullyPaid('${e.id}')" title="Komplett als bezahlt markieren">voll</button>
+
+      // Einträge desselben Spielers am selben Tag zusammenfassen
+      const byPlayer = {};
+      dayEntries.forEach((e) => {
+        byPlayer[e.playerId] = byPlayer[e.playerId] || [];
+        byPlayer[e.playerId].push(e);
+      });
+      const playerIds = Object.keys(byPlayer).sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
+
+      const rows = playerIds.map((pid) => {
+        const list = byPlayer[pid];
+        const groupTotal = list.reduce((s, e) => s + amountOf(e), 0);
+        const groupPaid = list.reduce((s, e) => s + paidAmountOf(e), 0);
+        const groupRemaining = Math.max(0, groupTotal - groupPaid);
+
+        let af = 0, al = 0;
+        const manualParts = [];
+        list.forEach((e) => {
+          if (e.type === "alkoholfrei") af += e.qty;
+          else if (e.type === "alkoholisch") al += e.qty;
+          else if (e.type === "manuell") manualParts.push(`${euro(amountOf(e))}${e.note ? " (" + escapeHtml(e.note) + ")" : ""}`);
+        });
+        const parts = [];
+        if (af > 0) parts.push(`${af}× alkoholfrei`);
+        if (al > 0) parts.push(`${al}× alkoholisch`);
+        if (manualParts.length) parts.push(`manuell: ${manualParts.join(", ")}`);
+        const breakdown = parts.join(" · ") || "—";
+
+        const entryList = list.map((e) => `
+          <div style="display:flex; justify-content:space-between; font-size:11px; color:#8a8578; padding:2px 0;">
+            <span>${e.type === "manuell" ? "Manueller Betrag" : e.qty + "× " + (e.type === "alkoholfrei" ? "alkoholfrei" : "alkoholisch")} · ${euro(amountOf(e))}</span>
+            <button class="btn-icon" style="padding:0 4px; font-size:12px;" onclick="removeEntry('${e.id}')">✕</button>
           </div>
-          <button class="btn-icon" onclick="removeEntry('${e.id}')">✕</button>
+        `).join("");
+
+        return `
+        <div class="entry-row" style="flex-direction:column; align-items:stretch;">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px; flex-wrap:wrap;">
+            <span class="who">
+              ${escapeHtml(nameOf(pid))}
+              <div class="detail">${breakdown} · gesamt ${euro(groupTotal)}</div>
+              <div class="remaining-tag">noch offen: ${euro(groupRemaining)}</div>
+            </span>
+            <div class="pay-box">
+              <input type="text" value="${groupPaid.toFixed(2).replace(".", ",")}" onblur="updateGroupPaid('${date}', '${pid}', this.value)" title="Gezahlter Betrag gesamt für diesen Tag" />
+              <button class="btn-link" onclick="markGroupFullyPaid('${date}', '${pid}')" title="Komplett als bezahlt markieren">voll</button>
+            </div>
+          </div>
+          <div style="margin-top:4px;">${entryList}</div>
         </div>
       `;
       }).join("");
@@ -472,13 +506,19 @@
       document.getElementById("entryManualAmount").value = "";
       document.getElementById("entryManualNote").value = "";
     } else {
-      const type = document.getElementById("entryType").value;
-      const qty = parseInt(document.getElementById("entryQty").value, 10);
-      if (!qty || qty < 1) return;
-      const amount = (PRICE[type] || 0) * qty;
-      const id = entriesRef.push().key;
-      entriesRef.child(id).set({ playerId, type, qty, amount, date, paidAmount: 0 });
-      document.getElementById("entryQty").value = "1";
+      const qtyAf = parseInt(document.getElementById("entryQtyAf").value, 10) || 0;
+      const qtyAl = parseInt(document.getElementById("entryQtyAl").value, 10) || 0;
+      if (qtyAf <= 0 && qtyAl <= 0) return;
+      if (qtyAf > 0) {
+        const idAf = entriesRef.push().key;
+        entriesRef.child(idAf).set({ playerId, type: "alkoholfrei", qty: qtyAf, amount: PRICE.alkoholfrei * qtyAf, date, paidAmount: 0 });
+      }
+      if (qtyAl > 0) {
+        const idAl = entriesRef.push().key;
+        entriesRef.child(idAl).set({ playerId, type: "alkoholisch", qty: qtyAl, amount: PRICE.alkoholisch * qtyAl, date, paidAmount: 0 });
+      }
+      document.getElementById("entryQtyAf").value = "0";
+      document.getElementById("entryQtyAl").value = "0";
     }
   }
 
@@ -495,6 +535,30 @@
 
   function removeEntry(id) {
     entriesRef.child(id).remove();
+  }
+
+  // Verteilt einen gezahlten Gesamtbetrag auf alle Einträge eines Spielers an einem Tag
+  // (älteste Einträge zuerst als bezahlt markiert, Rest bleibt offen)
+  function updateGroupPaid(date, playerId, value) {
+    const amt = parseFloat(String(value).replace(",", "."));
+    const groupEntries = Object.entries(entries)
+      .filter(([id, e]) => e.date === date && e.playerId === playerId)
+      .map(([id, e]) => ({ id, ...e }))
+      .sort((a, b) => (a.id < b.id ? -1 : 1));
+    const total = groupEntries.reduce((s, e) => s + amountOf(e), 0);
+    let target = isNaN(amt) || amt < 0 ? 0 : Math.min(amt, total);
+    groupEntries.forEach((e) => {
+      const amtE = amountOf(e);
+      const pay = Math.min(amtE, target);
+      entriesRef.child(e.id).update({ paidAmount: pay, paid: null });
+      target -= pay;
+    });
+  }
+
+  function markGroupFullyPaid(date, playerId) {
+    const groupEntries = Object.entries(entries).filter(([id, e]) => e.date === date && e.playerId === playerId);
+    const total = groupEntries.reduce((s, [id, e]) => s + amountOf(e), 0);
+    updateGroupPaid(date, playerId, String(total));
   }
 </script>
 </body>

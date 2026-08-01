@@ -102,8 +102,13 @@
   .entry-row:last-child { border-bottom: none; }
   .entry-row .who { flex: 1; min-width: 140px; }
   .entry-row .detail { color: #3A4750; font-size: 12px; }
-  .pay-box { display: flex; align-items: center; gap: 4px; }
+  .pay-box { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
   .pay-box input { width: 70px; padding: 6px 8px; font-size: 13px; }
+  .pay-box select { width: auto; padding: 6px 8px; font-size: 12px; }
+  .balance-block { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #f0eee8; font-size: 15px; }
+  .balance-block:last-child { border-bottom: none; }
+  .checkbox-line { display: flex; align-items: center; gap: 8px; font-size: 14px; margin-bottom: 10px; }
+  .checkbox-line input { width: auto; }
   .subtotal { text-align: right; font-size: 13px; color: #3A4750; margin-top: 4px; }
   .subtotal .split { display: block; font-size: 11px; color: #8a8578; }
   .toggle-group { display: flex; gap: 6px; margin-bottom: 10px; }
@@ -152,6 +157,7 @@
       <button class="tab-btn" data-tab="tage" onclick="switchTab('tage')">Nach Tag</button>
       <button class="tab-btn" data-tab="eintragen" onclick="switchTab('eintragen')">Eintragen</button>
       <button class="tab-btn" data-tab="spieler" onclick="switchTab('spieler')">Spieler</button>
+      <button class="tab-btn" data-tab="kasse" onclick="switchTab('kasse')">Kasse</button>
     </div>
 
     <!-- Übersicht: offene Beträge gesamt pro Spieler -->
@@ -161,6 +167,7 @@
 
     <!-- Nach Tag -->
     <div class="tab-panel" id="panel-tage">
+      <div id="weekList" style="margin-bottom:18px;"></div>
       <div id="dayList"></div>
     </div>
 
@@ -201,6 +208,16 @@
       <div class="flex-row">
         <input type="date" id="entryDate" />
       </div>
+      <div class="checkbox-line">
+        <input type="checkbox" id="entryPaidNow" onchange="toggleEntryPaidMethod()" />
+        <label for="entryPaidNow">direkt bezahlt</label>
+      </div>
+      <div class="flex-row" id="entryPaidMethodRow" style="display:none;">
+        <select id="entryPaidMethod">
+          <option value="bar">Bar</option>
+          <option value="paypal">PayPal</option>
+        </select>
+      </div>
       <button class="btn-gold" onclick="addEntry()" style="width:100%;">Eintragen</button>
     </div>
 
@@ -211,6 +228,32 @@
         <button class="btn-primary" onclick="addPlayer()">+</button>
       </div>
       <div id="playerList"></div>
+    </div>
+
+    <!-- Kassenbestand -->
+    <div class="tab-panel" id="panel-kasse">
+      <div id="kassenStand" style="margin-bottom:20px;"></div>
+      <div class="small" style="margin-bottom:8px; text-transform:uppercase; letter-spacing:.05em;">Neue Buchung</div>
+      <div class="flex-row">
+        <select id="kbKonto">
+          <option value="bar">Bar</option>
+          <option value="paypal">PayPal</option>
+        </select>
+        <select id="kbRichtung">
+          <option value="ein">Einzahlung (+)</option>
+          <option value="aus">Auszahlung (–)</option>
+        </select>
+      </div>
+      <div class="flex-row">
+        <input type="text" id="kbAmount" placeholder="Betrag in €" />
+        <input type="date" id="kbDate" />
+      </div>
+      <div class="flex-row">
+        <input type="text" id="kbReason" placeholder="Grund (z. B. Anfangsbestand, Überweisung Verein)" />
+      </div>
+      <button class="btn-gold" onclick="addKassenbuch()" style="width:100%; margin-bottom:18px;">Buchen</button>
+      <div class="small" style="margin-bottom:8px; text-transform:uppercase; letter-spacing:.05em;">Buchungsverlauf</div>
+      <div id="kassenbuchList"></div>
     </div>
   </div>
 </main>
@@ -237,9 +280,11 @@
   const db = firebase.database();
   const playersRef = db.ref("players");
   const entriesRef = db.ref("entries");
+  const kassenbuchRef = db.ref("kassenbuch");
 
   let players = {};   // { id: { name } }
   let entries = {};   // { id: { playerId, date, type, qty, amount, paidAmount, paid, note } }
+  let kassenbuch = {}; // { id: { konto: 'bar'|'paypal', amount, reason, date, erfasstVon } }
   let entryMode = "getraenk";
 
   function euro(n) {
@@ -272,6 +317,23 @@
   function todayStr() {
     return new Date().toISOString().slice(0, 10);
   }
+  function formatDateShort(iso) {
+    const d = new Date(iso + "T00:00:00");
+    return d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
+  }
+  // Montag der Woche, zu der ein Datum gehört
+  function mondayOf(dateStr) {
+    const d = new Date(dateStr + "T00:00:00");
+    const day = d.getDay();
+    const diff = day === 0 ? -6 : 1 - day;
+    d.setDate(d.getDate() + diff);
+    return d.toISOString().slice(0, 10);
+  }
+  function sundayOf(mondayStr) {
+    const d = new Date(mondayStr + "T00:00:00");
+    d.setDate(d.getDate() + 6);
+    return d.toISOString().slice(0, 10);
+  }
 
   playersRef.on("value", (snap) => {
     players = snap.val() || {};
@@ -281,14 +343,20 @@
     entries = snap.val() || {};
     renderAll();
   });
+  kassenbuchRef.on("value", (snap) => {
+    kassenbuch = snap.val() || {};
+    renderAll();
+  });
 
   function renderAll() {
     renderPublicList();
     if (document.getElementById("adminArea").style.display !== "none") {
       renderOverview();
+      renderWeeks();
       renderDays();
       renderPlayerSelect();
       renderPlayerList();
+      renderKasse();
     }
   }
 
@@ -399,8 +467,12 @@
               <div class="remaining-tag">noch offen: ${euro(groupRemaining)}</div>
             </span>
             <div class="pay-box">
-              <input type="text" value="${groupPaid.toFixed(2).replace(".", ",")}" onblur="updateGroupPaid('${date}', '${pid}', this.value)" title="Gezahlter Betrag gesamt für diesen Tag" />
-              <button class="btn-link" onclick="markGroupFullyPaid('${date}', '${pid}')" title="Komplett als bezahlt markieren">voll</button>
+              <select id="zw-${date}-${pid}">
+                <option value="bar">Bar</option>
+                <option value="paypal">PayPal</option>
+              </select>
+              <input type="text" value="${groupPaid.toFixed(2).replace(".", ",")}" onblur="updateGroupPaid('${date}', '${pid}', this.value, document.getElementById('zw-${date}-${pid}').value)" title="Gezahlter Betrag gesamt für diesen Tag" />
+              <button class="btn-link" onclick="markGroupFullyPaid('${date}', '${pid}', document.getElementById('zw-${date}-${pid}').value)" title="Komplett als bezahlt markieren">voll</button>
             </div>
           </div>
           <div style="margin-top:4px;">${entryList}</div>
@@ -415,6 +487,35 @@
             Tagessumme (alle Verkäufe): <strong>${euro(subtotal)}</strong>
             <span class="split">davon 80% an Verein: ${euro(verein)} · 20% Mannschaftskasse: ${euro(kasse)}</span>
           </div>
+        </div>
+      `;
+    }).join("");
+  }
+
+  // ---- Admin: Wochensummen (Mo–So) ----
+  function renderWeeks() {
+    const el = document.getElementById("weekList");
+    const byWeek = {};
+    Object.values(entries).forEach((e) => {
+      const monday = mondayOf(e.date);
+      byWeek[monday] = (byWeek[monday] || 0) + amountOf(e);
+    });
+    const weeks = Object.keys(byWeek).sort((a, b) => (a < b ? 1 : -1));
+    if (weeks.length === 0) {
+      el.innerHTML = "";
+      return;
+    }
+    el.innerHTML = '<h3 style="font-size:14px; margin:0 0 8px; color:#14345E;">Wochensummen</h3>' + weeks.map((mo) => {
+      const total = byWeek[mo];
+      const verein = total * 0.8;
+      const kasse = total * 0.2;
+      return `
+        <div class="row" style="flex-direction:column; align-items:stretch;">
+          <div style="display:flex; justify-content:space-between;">
+            <span>${formatDateShort(mo)} – ${formatDateShort(sundayOf(mo))}</span>
+            <span class="amount paid">${euro(total)}</span>
+          </div>
+          <span style="font-size:11px; color:#8a8578;">davon 80% an Verein: ${euro(verein)} · 20% Mannschaftskasse: ${euro(kasse)}</span>
         </div>
       `;
     }).join("");
@@ -504,17 +605,28 @@
     });
   }
 
+  function toggleEntryPaidMethod() {
+    const checked = document.getElementById("entryPaidNow").checked;
+    document.getElementById("entryPaidMethodRow").style.display = checked ? "flex" : "none";
+  }
+
   function addEntry() {
     const playerId = document.getElementById("entryPlayer").value;
     const date = document.getElementById("entryDate").value || todayStr();
     if (!playerId) return;
+    const paidNow = document.getElementById("entryPaidNow").checked;
+    const paidMethod = document.getElementById("entryPaidMethod").value;
+    let totalAdded = 0;
+    let reasonLabel = "";
 
     if (entryMode === "manuell") {
       const amount = parseFloat(document.getElementById("entryManualAmount").value.replace(",", "."));
       const note = document.getElementById("entryManualNote").value.trim();
       if (!amount || amount <= 0) return;
       const id = entriesRef.push().key;
-      entriesRef.child(id).set({ playerId, type: "manuell", amount, date, paidAmount: 0, note: note || null, erfasstVon: currentAdmin });
+      entriesRef.child(id).set({ playerId, type: "manuell", amount, date, paidAmount: paidNow ? amount : 0, note: note || null, erfasstVon: currentAdmin });
+      totalAdded = amount;
+      reasonLabel = `Manueller Betrag – ${nameOf(playerId)}`;
       document.getElementById("entryManualAmount").value = "";
       document.getElementById("entryManualNote").value = "";
     } else {
@@ -522,16 +634,28 @@
       const qtyAl = parseInt(document.getElementById("entryQtyAl").value, 10) || 0;
       if (qtyAf <= 0 && qtyAl <= 0) return;
       if (qtyAf > 0) {
+        const amtAf = PRICE.alkoholfrei * qtyAf;
         const idAf = entriesRef.push().key;
-        entriesRef.child(idAf).set({ playerId, type: "alkoholfrei", qty: qtyAf, amount: PRICE.alkoholfrei * qtyAf, date, paidAmount: 0, erfasstVon: currentAdmin });
+        entriesRef.child(idAf).set({ playerId, type: "alkoholfrei", qty: qtyAf, amount: amtAf, date, paidAmount: paidNow ? amtAf : 0, erfasstVon: currentAdmin });
+        totalAdded += amtAf;
       }
       if (qtyAl > 0) {
+        const amtAl = PRICE.alkoholisch * qtyAl;
         const idAl = entriesRef.push().key;
-        entriesRef.child(idAl).set({ playerId, type: "alkoholisch", qty: qtyAl, amount: PRICE.alkoholisch * qtyAl, date, paidAmount: 0, erfasstVon: currentAdmin });
+        entriesRef.child(idAl).set({ playerId, type: "alkoholisch", qty: qtyAl, amount: amtAl, date, paidAmount: paidNow ? amtAl : 0, erfasstVon: currentAdmin });
+        totalAdded += amtAl;
       }
+      reasonLabel = `Getränke – ${nameOf(playerId)}`;
       document.getElementById("entryQtyAf").value = "0";
       document.getElementById("entryQtyAl").value = "0";
     }
+
+    if (paidNow && totalAdded > 0) {
+      const kbId = kassenbuchRef.push().key;
+      kassenbuchRef.child(kbId).set({ konto: paidMethod, amount: totalAdded, reason: reasonLabel, date, erfasstVon: currentAdmin });
+    }
+    document.getElementById("entryPaidNow").checked = false;
+    document.getElementById("entryPaidMethodRow").style.display = "none";
   }
 
   function updatePaidAmount(id, value) {
@@ -550,27 +674,91 @@
   }
 
   // Verteilt einen gezahlten Gesamtbetrag auf alle Einträge eines Spielers an einem Tag
-  // (älteste Einträge zuerst als bezahlt markiert, Rest bleibt offen)
-  function updateGroupPaid(date, playerId, value) {
+  // (älteste Einträge zuerst als bezahlt markiert, Rest bleibt offen) und bucht die
+  // Differenz zum vorherigen Stand automatisch in die Kasse (Bar/PayPal)
+  function updateGroupPaid(date, playerId, value, konto) {
     const amt = parseFloat(String(value).replace(",", "."));
     const groupEntries = Object.entries(entries)
       .filter(([id, e]) => e.date === date && e.playerId === playerId)
       .map(([id, e]) => ({ id, ...e }))
       .sort((a, b) => (a.id < b.id ? -1 : 1));
     const total = groupEntries.reduce((s, e) => s + amountOf(e), 0);
-    let target = isNaN(amt) || amt < 0 ? 0 : Math.min(amt, total);
+    const oldPaidTotal = groupEntries.reduce((s, e) => s + paidAmountOf(e), 0);
+    const newPaidTotal = isNaN(amt) || amt < 0 ? 0 : Math.min(amt, total);
+    let remaining = newPaidTotal;
     groupEntries.forEach((e) => {
       const amtE = amountOf(e);
-      const pay = Math.min(amtE, target);
+      const pay = Math.min(amtE, remaining);
       entriesRef.child(e.id).update({ paidAmount: pay, paid: null, zuletztBearbeitetVon: currentAdmin });
-      target -= pay;
+      remaining -= pay;
     });
+    const delta = newPaidTotal - oldPaidTotal;
+    if (Math.abs(delta) > 0.001) {
+      const kbId = kassenbuchRef.push().key;
+      kassenbuchRef.child(kbId).set({
+        konto: konto || "bar",
+        amount: delta,
+        reason: `Getränke – ${nameOf(playerId)} – ${formatDateShort(date)}`,
+        date: todayStr(),
+        erfasstVon: currentAdmin,
+      });
+    }
   }
 
-  function markGroupFullyPaid(date, playerId) {
+  function markGroupFullyPaid(date, playerId, konto) {
     const groupEntries = Object.entries(entries).filter(([id, e]) => e.date === date && e.playerId === playerId);
     const total = groupEntries.reduce((s, [id, e]) => s + amountOf(e), 0);
-    updateGroupPaid(date, playerId, String(total));
+    updateGroupPaid(date, playerId, String(total), konto);
+  }
+
+  // ---- Kassenbestand (Bar / PayPal) ----
+  function renderKasse() {
+    const totals = { bar: 0, paypal: 0 };
+    Object.values(kassenbuch).forEach((b) => {
+      totals[b.konto] = (totals[b.konto] || 0) + (b.amount || 0);
+    });
+    const gesamt = totals.bar + totals.paypal;
+    const standEl = document.getElementById("kassenStand");
+    standEl.innerHTML = `
+      <div class="balance-block"><span>Bar</span><span class="amount paid">${euro(totals.bar)}</span></div>
+      <div class="balance-block"><span>PayPal-Pool</span><span class="amount paid">${euro(totals.paypal)}</span></div>
+      <div class="subtotal" style="text-align:left; margin-top:8px;">Gesamtbestand: <strong>${euro(gesamt)}</strong></div>
+    `;
+
+    const listEl = document.getElementById("kassenbuchList");
+    const sorted = Object.entries(kassenbuch).sort((a, b) => (a[1].date < b[1].date ? 1 : -1));
+    if (sorted.length === 0) {
+      listEl.innerHTML = '<p class="small">Noch keine Buchungen vorhanden.</p>';
+      return;
+    }
+    listEl.innerHTML = sorted.map(([id, b]) => `
+      <div class="row">
+        <span class="who">
+          ${formatDateShort(b.date)} · ${b.konto === "bar" ? "Bar" : "PayPal"}${b.reason ? " · " + escapeHtml(b.reason) : ""}
+          <div class="detail">${b.erfasstVon ? "erfasst: " + escapeHtml(b.erfasstVon) : ""}</div>
+        </span>
+        <span class="amount${b.amount >= 0 ? " paid" : ""}">${b.amount >= 0 ? "+" : ""}${euro(b.amount)}</span>
+        <button class="btn-icon" onclick="removeKassenbuch('${id}')">✕</button>
+      </div>
+    `).join("");
+  }
+
+  function addKassenbuch() {
+    const konto = document.getElementById("kbKonto").value;
+    const richtung = document.getElementById("kbRichtung").value;
+    const amtRaw = parseFloat(document.getElementById("kbAmount").value.replace(",", "."));
+    const reason = document.getElementById("kbReason").value.trim();
+    const date = document.getElementById("kbDate").value || todayStr();
+    if (!amtRaw || amtRaw <= 0) return;
+    const amount = richtung === "aus" ? -amtRaw : amtRaw;
+    const id = kassenbuchRef.push().key;
+    kassenbuchRef.child(id).set({ konto, amount, reason: reason || null, date, erfasstVon: currentAdmin });
+    document.getElementById("kbAmount").value = "";
+    document.getElementById("kbReason").value = "";
+  }
+
+  function removeKassenbuch(id) {
+    kassenbuchRef.child(id).remove();
   }
 
 </script>

@@ -179,7 +179,10 @@
       </div>
 
       <div class="flex-row">
-        <select id="entryPlayer"></select>
+        <select id="entryPlayer" onchange="updateSammelHint()"></select>
+      </div>
+      <div class="small" id="sammelHint" style="display:none; margin-bottom:10px;">
+        Sammelbuchung: kein einzelner Spieler wird belastet, zählt aber in die Tages-/Wochensumme. Wird automatisch als bezahlt geführt, ohne Kassenbuch-Eintrag.
       </div>
 
       <div id="modeGetraenk">
@@ -316,10 +319,19 @@
     return Math.max(0, amountOf(e) - paidAmountOf(e));
   }
   function nameOf(id) {
+    if (id === "sammel") return "Sammelbuchung";
     return players[id] ? players[id].name : "Unbekannt";
   }
+  // Gibt ein Datum als lokales YYYY-MM-DD zurück, ohne UTC-Umrechnung
+  // (toISOString() würde in Zeitzonen vor UTC, z.B. deutsche Sommerzeit, den Tag verschieben)
+  function toDateStr(d) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  }
   function todayStr() {
-    return new Date().toISOString().slice(0, 10);
+    return toDateStr(new Date());
   }
   function formatDateShort(iso) {
     const d = new Date(iso + "T00:00:00");
@@ -331,12 +343,12 @@
     const day = d.getDay();
     const diff = day === 0 ? -6 : 1 - day;
     d.setDate(d.getDate() + diff);
-    return d.toISOString().slice(0, 10);
+    return toDateStr(d);
   }
   function sundayOf(mondayStr) {
     const d = new Date(mondayStr + "T00:00:00");
     d.setDate(d.getDate() + 6);
-    return d.toISOString().slice(0, 10);
+    return toDateStr(d);
   }
 
   playersRef.on("value", (snap) => {
@@ -392,7 +404,7 @@
       totals[e.playerId] = (totals[e.playerId] || 0) + remainingOf(e);
     });
     const el = document.getElementById("adminOverview");
-    const rows = Object.entries(totals).sort((a, b) => nameOf(a[0]).localeCompare(nameOf(b[0])));
+    const rows = Object.entries(totals).filter(([id]) => id !== "sammel").sort((a, b) => nameOf(a[0]).localeCompare(nameOf(b[0])));
     if (rows.length === 0) {
       el.innerHTML = '<p class="small">Noch keine Spieler angelegt.</p>';
       return;
@@ -551,8 +563,10 @@
     const sel = document.getElementById("entryPlayer");
     const current = sel.value;
     const sorted = Object.entries(players).sort((a, b) => a[1].name.localeCompare(b[1].name));
-    sel.innerHTML = sorted.map(([id, p]) => `<option value="${id}">${escapeHtml(p.name)}</option>`).join("");
+    const sammelOption = `<option value="sammel">— Sammelbuchung (unbekannt wer) —</option>`;
+    sel.innerHTML = sammelOption + sorted.map(([id, p]) => `<option value="${id}">${escapeHtml(p.name)}</option>`).join("");
     if (current) sel.value = current;
+    updateSammelHint();
   }
 
   // ---- Admin: Spieler verwalten ----
@@ -610,6 +624,11 @@
     document.getElementById("modeManuell").style.display = mode === "manuell" ? "block" : "none";
   }
 
+  function updateSammelHint() {
+    const isSammel = document.getElementById("entryPlayer").value === "sammel";
+    document.getElementById("sammelHint").style.display = isSammel ? "block" : "none";
+  }
+
   function addPlayer() {
     const name = document.getElementById("newPlayerName").value.trim();
     if (!name) return;
@@ -634,7 +653,8 @@
     const playerId = document.getElementById("entryPlayer").value;
     const date = document.getElementById("entryDate").value || todayStr();
     if (!playerId) return;
-    const paidNow = document.getElementById("entryPaidNow").checked;
+    const isSammel = playerId === "sammel";
+    const paidNow = isSammel ? true : document.getElementById("entryPaidNow").checked;
     const paidMethod = document.getElementById("entryPaidMethod").value;
     let totalAdded = 0;
     let reasonLabel = "";
@@ -672,7 +692,8 @@
       document.getElementById("entryQtyAl").value = "0";
     }
 
-    if (paidNow && totalAdded > 0) {
+    // Sammelbuchungen haben keinen echten Käufer -> kein Geldfluss, kein Kassenbuch-Eintrag
+    if (!isSammel && paidNow && totalAdded > 0) {
       const kbId = kassenbuchRef.push().key;
       kassenbuchRef.child(kbId).set({ konto: paidMethod, amount: totalAdded, reason: reasonLabel, date, erfasstVon: currentAdmin });
     }

@@ -203,6 +203,10 @@
         <div class="flex-row">
           <input type="text" id="entryManualNote" placeholder="Notiz (optional, z. B. Rest offen)" />
         </div>
+        <div class="checkbox-line">
+          <input type="checkbox" id="entryExcludeSales" />
+          <label for="entryExcludeSales">Altschuld – nicht in Tages-/Wochenabrechnung für Verein zählen</label>
+        </div>
       </div>
 
       <div class="flex-row">
@@ -414,9 +418,11 @@
     }
     el.innerHTML = dates.map((date) => {
       const dayEntries = byDate[date];
-      const subtotal = dayEntries.reduce((s, e) => s + amountOf(e), 0);
-      const afTotal = dayEntries.filter((e) => e.type === "alkoholfrei").reduce((s, e) => s + amountOf(e), 0);
-      const alTotal = dayEntries.filter((e) => e.type === "alkoholisch").reduce((s, e) => s + amountOf(e), 0);
+      const salesEntries = dayEntries.filter((e) => !e.excludeFromSales);
+      const subtotal = salesEntries.reduce((s, e) => s + amountOf(e), 0);
+      const afTotal = salesEntries.filter((e) => e.type === "alkoholfrei").reduce((s, e) => s + amountOf(e), 0);
+      const alTotal = salesEntries.filter((e) => e.type === "alkoholisch").reduce((s, e) => s + amountOf(e), 0);
+      const altschuldSum = dayEntries.filter((e) => e.excludeFromSales).reduce((s, e) => s + amountOf(e), 0);
       const verein = subtotal * 0.8;
       const kasse = subtotal * 0.2;
 
@@ -439,7 +445,7 @@
         list.forEach((e) => {
           if (e.type === "alkoholfrei") af += e.qty;
           else if (e.type === "alkoholisch") al += e.qty;
-          else if (e.type === "manuell") manualParts.push(`${euro(amountOf(e))}${e.note ? " (" + escapeHtml(e.note) + ")" : ""}`);
+          else if (e.type === "manuell") manualParts.push(`${euro(amountOf(e))}${e.note ? " (" + escapeHtml(e.note) + ")" : ""}${e.excludeFromSales ? " [Altschuld]" : ""}`);
         });
         const parts = [];
         if (af > 0) parts.push(`${af}× alkoholfrei`);
@@ -489,6 +495,7 @@
             Tagessumme (alle Verkäufe): <strong>${euro(subtotal)}</strong>
             <span class="split">davon ${euro(afTotal)} alkoholfrei · ${euro(alTotal)} alkoholisch</span>
             <span class="split">davon 80% an Verein: ${euro(verein)} · 20% Mannschaftskasse: ${euro(kasse)}</span>
+            ${altschuldSum > 0.001 ? `<span class="split">zusätzlich ${euro(altschuldSum)} Altschuld (nicht in obiger Abrechnung enthalten)</span>` : ""}
           </div>
         </div>
       `;
@@ -501,8 +508,12 @@
     const byWeek = {};
     Object.values(entries).forEach((e) => {
       const monday = mondayOf(e.date);
-      if (!byWeek[monday]) byWeek[monday] = { total: 0, af: 0, al: 0 };
+      if (!byWeek[monday]) byWeek[monday] = { total: 0, af: 0, al: 0, altschuld: 0 };
       const amt = amountOf(e);
+      if (e.excludeFromSales) {
+        byWeek[monday].altschuld += amt;
+        return;
+      }
       byWeek[monday].total += amt;
       if (e.type === "alkoholfrei") byWeek[monday].af += amt;
       else if (e.type === "alkoholisch") byWeek[monday].al += amt;
@@ -524,6 +535,7 @@
           </div>
           <span style="font-size:11px; color:#8a8578;">davon ${euro(w.af)} alkoholfrei · ${euro(w.al)} alkoholisch</span>
           <span style="font-size:11px; color:#8a8578;">davon 80% an Verein: ${euro(verein)} · 20% Mannschaftskasse: ${euro(kasse)}</span>
+          ${w.altschuld > 0.001 ? `<span style="font-size:11px; color:#8a8578;">zusätzlich ${euro(w.altschuld)} Altschuld (nicht in obiger Abrechnung enthalten)</span>` : ""}
         </div>
       `;
     }).join("");
@@ -630,13 +642,15 @@
     if (entryMode === "manuell") {
       const amount = parseFloat(document.getElementById("entryManualAmount").value.replace(",", "."));
       const note = document.getElementById("entryManualNote").value.trim();
+      const excludeFromSales = document.getElementById("entryExcludeSales").checked;
       if (!amount || amount <= 0) return;
       const id = entriesRef.push().key;
-      entriesRef.child(id).set({ playerId, type: "manuell", amount, date, paidAmount: paidNow ? amount : 0, note: note || null, erfasstVon: currentAdmin });
+      entriesRef.child(id).set({ playerId, type: "manuell", amount, date, paidAmount: paidNow ? amount : 0, note: note || null, excludeFromSales, erfasstVon: currentAdmin });
       totalAdded = amount;
       reasonLabel = `Manueller Betrag – ${nameOf(playerId)}`;
       document.getElementById("entryManualAmount").value = "";
       document.getElementById("entryManualNote").value = "";
+      document.getElementById("entryExcludeSales").checked = false;
     } else {
       const qtyAf = parseInt(document.getElementById("entryQtyAf").value, 10) || 0;
       const qtyAl = parseInt(document.getElementById("entryQtyAl").value, 10) || 0;

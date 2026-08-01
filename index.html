@@ -211,6 +211,11 @@
         <button class="btn-primary" onclick="addPlayer()">+</button>
       </div>
       <div id="playerList"></div>
+      <div style="margin-top:16px; padding-top:14px; border-top:1px solid #f0eee8;">
+        <div class="small" style="margin-bottom:8px;">Einmalige Aktion: alle bisherigen Buchungen ohne Zuordnung nachträglich Johan zuweisen.</div>
+        <button class="btn-link" onclick="backfillErfasstVon()">Alte Buchungen Johan zuordnen</button>
+        <div class="small" id="backfillStatus" style="margin-top:6px;"></div>
+      </div>
     </div>
   </div>
 </main>
@@ -571,6 +576,21 @@
     const groupEntries = Object.entries(entries).filter(([id, e]) => e.date === date && e.playerId === playerId);
     const total = groupEntries.reduce((s, [id, e]) => s + amountOf(e), 0);
     updateGroupPaid(date, playerId, String(total));
+  }
+
+  // Einmalige Aktion: bestehende Buchungen ohne "erfasstVon" nachträglich Johan zuordnen
+  function backfillErfasstVon() {
+    const statusEl = document.getElementById("backfillStatus");
+    const toUpdate = Object.entries(entries).filter(([id, e]) => !e.erfasstVon);
+    if (toUpdate.length === 0) {
+      statusEl.textContent = "Alle Buchungen haben bereits eine Zuordnung.";
+      return;
+    }
+    if (!confirm(`${toUpdate.length} Buchung(en) ohne Zuordnung gefunden. Jetzt alle nachträglich Johan zuweisen?`)) return;
+    toUpdate.forEach(([id]) => {
+      entriesRef.child(id).update({ erfasstVon: "Johan" });
+    });
+    statusEl.textContent = `${toUpdate.length} Buchung(en) wurden Johan zugeordnet.`;
   }
 </script>
 </body>

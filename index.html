@@ -142,7 +142,7 @@
 
   <div class="card" id="adminArea" style="display:none;">
     <div class="card-head">
-      <h2>🔓 Kassenwart-Bereich</h2>
+      <h2>🔓 Kassenwart-Bereich <span id="adminNameTag" style="color:#C9A227; font-size:12px; text-transform:none; letter-spacing:0;"></span></h2>
       <button class="btn-link" onclick="logout()">Abmelden</button>
     </div>
     <div class="status" id="statusLine">verbunden</div>
@@ -229,6 +229,8 @@
   // =====================================
 
   const VALID_PINS = ["2509", "0303"]; // beide PINs sind gültig
+  const ADMIN_NAMES = { "2509": "Johan", "0303": "Zerai" }; // PIN -> Kassenwart-Name
+  let currentAdmin = null; // Name des aktuell angemeldeten Kassenwarts (nur für diese Sitzung)
   const PRICE = { alkoholfrei: 2.0, alkoholisch: 2.5 };
 
   firebase.initializeApp(firebaseConfig);
@@ -375,12 +377,18 @@
         if (manualParts.length) parts.push(`manuell: ${manualParts.join(", ")}`);
         const breakdown = parts.join(" · ") || "—";
 
-        const entryList = list.map((e) => `
-          <div style="display:flex; justify-content:space-between; font-size:11px; color:#8a8578; padding:2px 0;">
-            <span>${e.type === "manuell" ? "Manueller Betrag" : e.qty + "× " + (e.type === "alkoholfrei" ? "alkoholfrei" : "alkoholisch")} · ${euro(amountOf(e))}</span>
+        const entryList = list.map((e) => {
+          const who = [];
+          if (e.erfasstVon) who.push(`erfasst: ${escapeHtml(e.erfasstVon)}`);
+          if (e.zuletztBearbeitetVon) who.push(`Zahlung bearbeitet: ${escapeHtml(e.zuletztBearbeitetVon)}`);
+          const whoText = who.length ? ` · ${who.join(" · ")}` : "";
+          return `
+          <div style="display:flex; justify-content:space-between; font-size:11px; color:#8a8578; padding:2px 0; gap:6px;">
+            <span>${e.type === "manuell" ? "Manueller Betrag" : e.qty + "× " + (e.type === "alkoholfrei" ? "alkoholfrei" : "alkoholisch")} · ${euro(amountOf(e))}${whoText}</span>
             <button class="btn-icon" style="padding:0 4px; font-size:12px;" onclick="removeEntry('${e.id}')">✕</button>
           </div>
-        `).join("");
+        `;
+        }).join("");
 
         return `
         <div class="entry-row" style="flex-direction:column; align-items:stretch;">
@@ -447,6 +455,8 @@
     const val = document.getElementById("pinInput").value.trim();
     const errEl = document.getElementById("pinError");
     if (VALID_PINS.includes(val)) {
+      currentAdmin = ADMIN_NAMES[val] || "Kassenwart";
+      document.getElementById("adminNameTag").textContent = "– angemeldet als " + currentAdmin;
       document.getElementById("pinCard").style.display = "none";
       document.getElementById("adminArea").style.display = "block";
       errEl.style.display = "none";
@@ -459,6 +469,8 @@
   }
 
   function logout() {
+    currentAdmin = null;
+    document.getElementById("adminNameTag").textContent = "";
     document.getElementById("adminArea").style.display = "none";
     document.getElementById("pinCard").style.display = "block";
     document.getElementById("pinInput").value = "";
@@ -502,7 +514,7 @@
       const note = document.getElementById("entryManualNote").value.trim();
       if (!amount || amount <= 0) return;
       const id = entriesRef.push().key;
-      entriesRef.child(id).set({ playerId, type: "manuell", amount, date, paidAmount: 0, note: note || null });
+      entriesRef.child(id).set({ playerId, type: "manuell", amount, date, paidAmount: 0, note: note || null, erfasstVon: currentAdmin });
       document.getElementById("entryManualAmount").value = "";
       document.getElementById("entryManualNote").value = "";
     } else {
@@ -511,11 +523,11 @@
       if (qtyAf <= 0 && qtyAl <= 0) return;
       if (qtyAf > 0) {
         const idAf = entriesRef.push().key;
-        entriesRef.child(idAf).set({ playerId, type: "alkoholfrei", qty: qtyAf, amount: PRICE.alkoholfrei * qtyAf, date, paidAmount: 0 });
+        entriesRef.child(idAf).set({ playerId, type: "alkoholfrei", qty: qtyAf, amount: PRICE.alkoholfrei * qtyAf, date, paidAmount: 0, erfasstVon: currentAdmin });
       }
       if (qtyAl > 0) {
         const idAl = entriesRef.push().key;
-        entriesRef.child(idAl).set({ playerId, type: "alkoholisch", qty: qtyAl, amount: PRICE.alkoholisch * qtyAl, date, paidAmount: 0 });
+        entriesRef.child(idAl).set({ playerId, type: "alkoholisch", qty: qtyAl, amount: PRICE.alkoholisch * qtyAl, date, paidAmount: 0, erfasstVon: currentAdmin });
       }
       document.getElementById("entryQtyAf").value = "0";
       document.getElementById("entryQtyAl").value = "0";
@@ -550,7 +562,7 @@
     groupEntries.forEach((e) => {
       const amtE = amountOf(e);
       const pay = Math.min(amtE, target);
-      entriesRef.child(e.id).update({ paidAmount: pay, paid: null });
+      entriesRef.child(e.id).update({ paidAmount: pay, paid: null, zuletztBearbeitetVon: currentAdmin });
       target -= pay;
     });
   }

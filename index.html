@@ -63,7 +63,7 @@
   }
   .row:last-child { border-bottom: none; }
   .amount { font-family: "Courier New", monospace; font-weight: 600; color: #B23A2E; }
-  .amount.paid { color: #14345E; text-decoration: line-through; opacity: .6; }
+  .amount.paid { color: #14345E; }
   input, button, select { font-family: inherit; font-size: 15px; }
   input[type=text], input[type=password], input[type=date], input[type=number], select {
     border: 1px solid #d8d5cc;
@@ -415,6 +415,8 @@
     el.innerHTML = dates.map((date) => {
       const dayEntries = byDate[date];
       const subtotal = dayEntries.reduce((s, e) => s + amountOf(e), 0);
+      const afTotal = dayEntries.filter((e) => e.type === "alkoholfrei").reduce((s, e) => s + amountOf(e), 0);
+      const alTotal = dayEntries.filter((e) => e.type === "alkoholisch").reduce((s, e) => s + amountOf(e), 0);
       const verein = subtotal * 0.8;
       const kasse = subtotal * 0.2;
 
@@ -485,6 +487,7 @@
           ${rows}
           <div class="subtotal">
             Tagessumme (alle Verkäufe): <strong>${euro(subtotal)}</strong>
+            <span class="split">davon ${euro(afTotal)} alkoholfrei · ${euro(alTotal)} alkoholisch</span>
             <span class="split">davon 80% an Verein: ${euro(verein)} · 20% Mannschaftskasse: ${euro(kasse)}</span>
           </div>
         </div>
@@ -498,7 +501,11 @@
     const byWeek = {};
     Object.values(entries).forEach((e) => {
       const monday = mondayOf(e.date);
-      byWeek[monday] = (byWeek[monday] || 0) + amountOf(e);
+      if (!byWeek[monday]) byWeek[monday] = { total: 0, af: 0, al: 0 };
+      const amt = amountOf(e);
+      byWeek[monday].total += amt;
+      if (e.type === "alkoholfrei") byWeek[monday].af += amt;
+      else if (e.type === "alkoholisch") byWeek[monday].al += amt;
     });
     const weeks = Object.keys(byWeek).sort((a, b) => (a < b ? 1 : -1));
     if (weeks.length === 0) {
@@ -506,15 +513,16 @@
       return;
     }
     el.innerHTML = '<h3 style="font-size:14px; margin:0 0 8px; color:#14345E;">Wochensummen</h3>' + weeks.map((mo) => {
-      const total = byWeek[mo];
-      const verein = total * 0.8;
-      const kasse = total * 0.2;
+      const w = byWeek[mo];
+      const verein = w.total * 0.8;
+      const kasse = w.total * 0.2;
       return `
         <div class="row" style="flex-direction:column; align-items:stretch;">
           <div style="display:flex; justify-content:space-between;">
             <span>${formatDateShort(mo)} – ${formatDateShort(sundayOf(mo))}</span>
-            <span class="amount paid">${euro(total)}</span>
+            <span class="amount paid">${euro(w.total)}</span>
           </div>
+          <span style="font-size:11px; color:#8a8578;">davon ${euro(w.af)} alkoholfrei · ${euro(w.al)} alkoholisch</span>
           <span style="font-size:11px; color:#8a8578;">davon 80% an Verein: ${euro(verein)} · 20% Mannschaftskasse: ${euro(kasse)}</span>
         </div>
       `;

@@ -83,6 +83,11 @@
 
 <main>
   <div class="card">
+    <h2>Offene Wetteinsätze (noch zu zahlen)</h2>
+    <div id="openWetteinsaetzeList"><p class="small">Lade…</p></div>
+  </div>
+
+  <div class="card">
     <h2>Offene Wetten</h2>
     <div id="openBetsList"><p class="small">Lade…</p></div>
   </div>
@@ -170,6 +175,7 @@
           <select id="stakeKonto">
             <option value="bar">Bar</option>
             <option value="paypal">PayPal</option>
+            <option value="offen">Offene Schuld (noch nicht bezahlt)</option>
           </select>
         </div>
       </div>
@@ -253,6 +259,7 @@
   stakesRef.on("value", (snap) => { stakes = snap.val() || {}; renderAll(); });
 
   function renderAll() {
+    renderOpenWetteinsaetze();
     renderOpenBets();
     renderPendingBets();
     renderClosedBets();
@@ -264,6 +271,27 @@
       renderStakeOptions();
       renderManageBets();
     }
+  }
+
+  // ---- Öffentlich: wer hat noch offene Wetteinsätze zu zahlen ----
+  function renderOpenWetteinsaetze() {
+    const el = document.getElementById("openWetteinsaetzeList");
+    const totals = {};
+    Object.values(stakes).forEach((s) => {
+      if (s.bezahlt) return;
+      const b = bets[s.betId];
+      if (!b) return;
+      totals[s.playerId] = (totals[s.playerId] || 0) + b.einsatz;
+    });
+    const rows = Object.entries(totals)
+      .filter(([id, sum]) => sum > 0.001)
+      .map(([id, sum]) => ({ name: nameOf(id), sum }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    if (rows.length === 0) {
+      el.innerHTML = '<p class="small">Aktuell hat niemand offene Wetteinsätze.</p>';
+      return;
+    }
+    el.innerHTML = rows.map((r) => `<div class="row"><span>${escapeHtml(r.name)}</span><span class="amount">${euro(r.sum)}</span></div>`).join("");
   }
 
   // ---- Öffentlich: offene Wetten ----
@@ -396,16 +424,17 @@
       const optionLabel = (b.optionen || [])[s.optionIndex] || "?";
       const bStakes = stakesFor(s.betId);
       const { pot } = betNumbers(b, bStakes);
+      const offenHinweis = !s.bezahlt ? ` · Einsatz noch offen (${euro(b.einsatz)})` : "";
       if (b.status === "offen" || b.status === "geschlossen") {
         const tippers = bStakes.filter((x) => x.optionIndex === s.optionIndex);
         const payoutIfWins = tippers.length > 0 ? pot / tippers.length : null;
         const statusLabel = b.status === "geschlossen" ? "Annahmeschluss" : "offen";
-        return `<div class="row"><span>${escapeHtml(b.frage)}<div class="small">Getippt: ${escapeHtml(optionLabel)} · Einsatz ${euro(b.einsatz)}</div></span><span class="badge offen">${payoutIfWins !== null ? "bei Sieg " + euro(payoutIfWins) : statusLabel}</span></div>`;
+        return `<div class="row"><span>${escapeHtml(b.frage)}<div class="small">Getippt: ${escapeHtml(optionLabel)} · Einsatz ${euro(b.einsatz)}${offenHinweis}</div></span><span class="badge offen">${payoutIfWins !== null ? "bei Sieg " + euro(payoutIfWins) : statusLabel}</span></div>`;
       }
       const winners = bStakes.filter((x) => x.optionIndex === b.ergebnis);
       const won = s.optionIndex === b.ergebnis;
       const payout = won && winners.length > 0 ? pot / winners.length : 0;
-      return `<div class="row"><span>${escapeHtml(b.frage)}<div class="small">Getippt: ${escapeHtml(optionLabel)} · ${won ? "gewonnen" : "nicht getroffen"}</div></span><span class="amount${won ? " paid" : ""}">${won ? "+" + euro(payout) : "–" + euro(b.einsatz)}</span></div>`;
+      return `<div class="row"><span>${escapeHtml(b.frage)}<div class="small">Getippt: ${escapeHtml(optionLabel)} · ${won ? "gewonnen" : "nicht getroffen"}${offenHinweis}</div></span><span class="amount${won ? " paid" : ""}">${won ? "+" + euro(payout) : "–" + euro(b.einsatz)}</span></div>`;
     }).join("");
   }
 
@@ -532,7 +561,7 @@
   function addStake() {
     const betId = document.getElementById("stakeBet").value;
     const playerId = document.getElementById("stakePlayer").value;
-    const konto = document.getElementById("stakeKonto").value;
+    const zahlweise = document.getElementById("stakeKonto").value; // 'bar' | 'paypal' | 'offen'
     const optionInput = document.querySelector('input[name="stakeOption"]:checked');
     if (!betId || !playerId || !optionInput) return;
     const optionIndex = parseInt(optionInput.value, 10);
@@ -542,20 +571,40 @@
     const existing = stakes[id];
 
     if (existing) {
-      // Tipp aktualisieren, Kassenanteil wurde schon einmal gebucht -> nicht nochmal
+      // Tipp aktualisieren, Zahlungsstatus bleibt wie er war
       stakesRef.child(id).update({ optionIndex, datum: todayStr(), erfasstVon: currentAdmin });
+    } else if (zahlweise === "offen") {
+      // Einsatz als offene Schuld erfassen -> kein Kassenbuch-Eintrag, bis bezahlt wird
+      stakesRef.child(id).set({ betId, playerId, optionIndex, datum: todayStr(), erfasstVon: currentAdmin, bezahlt: false, konto: null, kassenbuchId: null });
     } else {
-      // Neuer Einsatz -> Kassenanteil ins Kassenbuch buchen und Referenz am Einsatz speichern
+      // Neuer, direkt bezahlter Einsatz -> Kassenanteil ins Kassenbuch buchen
       const kbId = kassenbuchRef.push().key;
       kassenbuchRef.child(kbId).set({
-        konto,
+        konto: zahlweise,
         amount: b.kassenanteil,
         reason: `Wette – ${b.frage} – ${nameOf(playerId)}`,
         date: todayStr(),
         erfasstVon: currentAdmin,
       });
-      stakesRef.child(id).set({ betId, playerId, optionIndex, datum: todayStr(), erfasstVon: currentAdmin, konto, kassenbuchId: kbId });
+      stakesRef.child(id).set({ betId, playerId, optionIndex, datum: todayStr(), erfasstVon: currentAdmin, bezahlt: true, konto: zahlweise, kassenbuchId: kbId });
     }
+  }
+
+  // Eine offene Wettschuld nachträglich als bezahlt markieren (bucht dann den Kassenanteil)
+  function markStakePaid(stakeId, konto) {
+    const s = stakes[stakeId];
+    if (!s || s.bezahlt) return;
+    const b = bets[s.betId];
+    if (!b) return;
+    const kbId = kassenbuchRef.push().key;
+    kassenbuchRef.child(kbId).set({
+      konto,
+      amount: b.kassenanteil,
+      reason: `Wette – ${b.frage} – ${nameOf(s.playerId)}`,
+      date: todayStr(),
+      erfasstVon: currentAdmin,
+    });
+    stakesRef.child(stakeId).update({ bezahlt: true, konto, kassenbuchId: kbId });
   }
 
   // Einzelnen Einsatz stornieren (inkl. Rückbuchung aus dem Kassenbuch)
@@ -581,13 +630,27 @@
       const canResolve = b.status === "offen" || b.status === "geschlossen";
       const optionButtons = canResolve
         ? optionen.map((opt, i) => `<button class="btn-link" onclick="resolveBet('${id}', ${i})">${escapeHtml(opt)} gewinnt</button>`).join(" ")
-        : `<span class="small">Ergebnis: ${escapeHtml(optionen[b.ergebnis] || "?")}</span>`;
-      const stakeLines = bStakes.map((s) => `
-        <div class="stake-line">
-          <span>${escapeHtml(nameOf(s.playerId))} → ${escapeHtml(optionen[s.optionIndex] || "?")} (${s.konto === "paypal" ? "PayPal" : "Bar"})</span>
-          <button class="btn-icon" onclick="removeStake('${s.id}')">✕</button>
-        </div>
-      `).join("");
+          + ` <button class="btn-link" onclick="resolveBetNoWinner('${id}')">Kein Gewinner</button>`
+        : `<span class="small">Ergebnis: ${b.ergebnis === -1 ? "Kein Gewinner" : escapeHtml(optionen[b.ergebnis] || "?")}</span>`;
+      const stakeLines = bStakes.map((s) => {
+        const paidLabel = s.bezahlt ? (s.konto === "paypal" ? "PayPal" : "Bar") : "offen";
+        const payAction = s.bezahlt ? "" : `
+          <select id="payKonto-${s.id}" style="width:auto; padding:4px 6px; font-size:11px;">
+            <option value="bar">Bar</option>
+            <option value="paypal">PayPal</option>
+          </select>
+          <button class="btn-link" style="padding:2px 6px; font-size:11px;" onclick="markStakePaid('${s.id}', document.getElementById('payKonto-${s.id}').value)">bezahlt</button>
+        `;
+        return `
+          <div class="stake-line">
+            <span>${escapeHtml(nameOf(s.playerId))} → ${escapeHtml(optionen[s.optionIndex] || "?")} (${paidLabel})</span>
+            <span style="display:flex; align-items:center; gap:4px;">
+              ${payAction}
+              <button class="btn-icon" onclick="removeStake('${s.id}')">✕</button>
+            </span>
+          </div>
+        `;
+      }).join("");
       const badgeClass = b.status === "offen" ? "offen" : "zu";
       let statusActions = "";
       if (b.status === "offen") {
@@ -647,6 +710,14 @@
     const optionen = b.optionen || [];
     if (!confirm(`"${optionen[optionIndex]}" als Ergebnis festlegen? Das kann nicht rückgängig gemacht werden.`)) return;
     betsRef.child(betId).update({ status: "abgeschlossen", ergebnis: optionIndex, abgeschlossenVon: currentAdmin });
+  }
+
+  // Wette ohne Gewinner abschließen (z.B. Unentschieden oder niemand getippt hat richtig)
+  function resolveBetNoWinner(betId) {
+    const b = bets[betId];
+    if (!b) return;
+    if (!confirm("Als 'Kein Gewinner' abschließen? Der komplette eingesetzte Betrag bleibt dann in der Mannschaftskasse.")) return;
+    betsRef.child(betId).update({ status: "abgeschlossen", ergebnis: -1, abgeschlossenVon: currentAdmin });
   }
 
   function deleteBet(betId) {

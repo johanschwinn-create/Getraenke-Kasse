@@ -88,6 +88,11 @@
   </div>
 
   <div class="card">
+    <h2>Annahmeschluss – Ergebnis steht noch aus</h2>
+    <div id="pendingBetsList"></div>
+  </div>
+
+  <div class="card">
     <h2>Abgeschlossene Wetten</h2>
     <div id="closedBetsList"></div>
   </div>
@@ -127,7 +132,7 @@
       <div class="flex-row">
         <input type="text" id="newOptionen" placeholder="Optionen falls schon bekannt, mit Komma (optional, kann leer bleiben)" />
       </div>
-      <div class="small" style="margin-bottom:10px;">Optionen können leer bleiben, wenn noch unklar ist, wer/was alles zur Wahl steht (z. B. bei offenen Fragen wie "wer kassiert die meisten Karten"). Sie werden dann automatisch ergänzt, sobald beim Einsatz-Erfassen ein neuer Tipp eingetragen wird.</div>
+      <div class="small" style="margin-bottom:10px;">Optionen können leer bleiben.</div>
       <div class="flex-row">
         <div style="flex:1;">
           <div class="small" style="margin-bottom:4px;">Einsatz pro Person (€)</div>
@@ -249,6 +254,7 @@
 
   function renderAll() {
     renderOpenBets();
+    renderPendingBets();
     renderClosedBets();
     renderMyPlayerSelect();
     renderMyBets();
@@ -287,13 +293,40 @@
           }).join("");
       return `
         <div class="bet-card">
-          <div class="frage">${escapeHtml(b.frage)} <span class="badge offen">offen</span></div>
+          <div class="frage">${b.nummer ? b.nummer + ". " : ""}${escapeHtml(b.frage)} <span class="badge offen">offen</span></div>
           <div class="meta">Einsatz ${euro(b.einsatz)} (davon ${euro(b.kassenanteil)} Kasse) · ${formatDateShort(b.datum)}</div>
           ${optionRows}
           <div class="pot-line">
             Aktueller Gewinn-Topf: <strong>${euro(pot)}</strong> (${n} Teilnehmer)
             <span class="split">zusätzlich sicher an Kasse: ${euro(kasseLaufend)}</span>
           </div>
+        </div>
+      `;
+    }).join("");
+  }
+
+  // ---- Öffentlich: Annahmeschluss erreicht, Ergebnis noch offen ----
+  function renderPendingBets() {
+    const el = document.getElementById("pendingBetsList");
+    const pending = Object.entries(bets).filter(([id, b]) => b.status === "geschlossen");
+    if (pending.length === 0) {
+      el.innerHTML = '<p class="small">Aktuell keine Wetten mit Annahmeschluss.</p>';
+      return;
+    }
+    el.innerHTML = pending.sort((a, b) => (a[1].datum < b[1].datum ? 1 : -1)).map(([id, b]) => {
+      const bStakes = stakesFor(id);
+      const { n, pot } = betNumbers(b, bStakes);
+      const optionen = b.optionen || [];
+      const optionRows = optionen.map((opt, i) => {
+        const tippers = bStakes.filter((s) => s.optionIndex === i);
+        const names = tippers.map((s) => nameOf(s.playerId));
+        return `<div class="option-row"><span>${escapeHtml(opt)}<div class="option-names">${names.length ? names.map(escapeHtml).join(", ") : "–"}</div></span></div>`;
+      }).join("");
+      return `
+        <div class="bet-card">
+          <div class="frage">${b.nummer ? b.nummer + ". " : ""}${escapeHtml(b.frage)} <span class="badge zu">Annahmeschluss</span></div>
+          <div class="meta">Keine neuen Einsätze mehr möglich · Topf ${euro(pot)} (${n} Teilnehmer)</div>
+          ${optionRows}
         </div>
       `;
     }).join("");
@@ -323,7 +356,7 @@
       }).join("");
       return `
         <div class="bet-card">
-          <div class="frage">${escapeHtml(b.frage)} <span class="badge zu">abgeschlossen</span></div>
+          <div class="frage">${b.nummer ? b.nummer + ". " : ""}${escapeHtml(b.frage)} <span class="badge zu">abgeschlossen</span></div>
           <div class="meta">Einsatz ${euro(b.einsatz)} pro Person · ${formatDateShort(b.datum)}</div>
           ${optionRows}
           <div class="pot-line">
@@ -363,10 +396,11 @@
       const optionLabel = (b.optionen || [])[s.optionIndex] || "?";
       const bStakes = stakesFor(s.betId);
       const { pot } = betNumbers(b, bStakes);
-      if (b.status === "offen") {
+      if (b.status === "offen" || b.status === "geschlossen") {
         const tippers = bStakes.filter((x) => x.optionIndex === s.optionIndex);
         const payoutIfWins = tippers.length > 0 ? pot / tippers.length : null;
-        return `<div class="row"><span>${escapeHtml(b.frage)}<div class="small">Getippt: ${escapeHtml(optionLabel)} · Einsatz ${euro(b.einsatz)}</div></span><span class="badge offen">${payoutIfWins !== null ? "bei Sieg " + euro(payoutIfWins) : "offen"}</span></div>`;
+        const statusLabel = b.status === "geschlossen" ? "Annahmeschluss" : "offen";
+        return `<div class="row"><span>${escapeHtml(b.frage)}<div class="small">Getippt: ${escapeHtml(optionLabel)} · Einsatz ${euro(b.einsatz)}</div></span><span class="badge offen">${payoutIfWins !== null ? "bei Sieg " + euro(payoutIfWins) : statusLabel}</span></div>`;
       }
       const winners = bStakes.filter((x) => x.optionIndex === b.ergebnis);
       const won = s.optionIndex === b.ergebnis;
@@ -418,7 +452,8 @@
       return;
     }
     const id = betsRef.push().key;
-    betsRef.child(id).set({ frage, optionen, einsatz, kassenanteil, status: "offen", ergebnis: null, datum, erstelltVon: currentAdmin });
+    const nummer = Object.keys(bets).length + 1;
+    betsRef.child(id).set({ frage, optionen, einsatz, kassenanteil, status: "offen", ergebnis: null, datum, nummer, erstelltVon: currentAdmin });
     document.getElementById("newFrage").value = "";
     document.getElementById("newOptionen").value = "";
     document.getElementById("newEinsatz").value = "2";
@@ -543,7 +578,8 @@
       const bStakes = stakesFor(id);
       const { n, pot, kasseLaufend } = betNumbers(b, bStakes);
       const optionen = b.optionen || [];
-      const optionButtons = b.status === "offen"
+      const canResolve = b.status === "offen" || b.status === "geschlossen";
+      const optionButtons = canResolve
         ? optionen.map((opt, i) => `<button class="btn-link" onclick="resolveBet('${id}', ${i})">${escapeHtml(opt)} gewinnt</button>`).join(" ")
         : `<span class="small">Ergebnis: ${escapeHtml(optionen[b.ergebnis] || "?")}</span>`;
       const stakeLines = bStakes.map((s) => `
@@ -552,16 +588,57 @@
           <button class="btn-icon" onclick="removeStake('${s.id}')">✕</button>
         </div>
       `).join("");
+      const badgeClass = b.status === "offen" ? "offen" : "zu";
+      let statusActions = "";
+      if (b.status === "offen") {
+        statusActions = `<button class="btn-link" onclick="closeBet('${id}')">Annahmeschluss (keine neuen Einsätze mehr)</button>`;
+      } else if (b.status === "geschlossen") {
+        statusActions = `<button class="btn-link" onclick="reopenBet('${id}')">Wieder öffnen</button>`;
+      }
+      const manualOptionRow = canResolve ? `
+        <div class="flex-row" style="margin-top:8px;">
+          <input type="text" id="manualOption-${id}" placeholder="Ergebnis-Option manuell hinzufügen (falls niemand getippt hat)" />
+          <button class="btn-primary" onclick="addManualOption('${id}')">+</button>
+        </div>
+      ` : "";
       return `
         <div class="bet-card">
-          <div class="frage">${escapeHtml(b.frage)} <span class="badge ${b.status === "offen" ? "offen" : "zu"}">${b.status}</span></div>
+          <div class="frage">${b.nummer ? b.nummer + ". " : ""}${escapeHtml(b.frage)} <span class="badge ${badgeClass}">${b.status}</span></div>
           <div class="meta">Einsatz ${euro(b.einsatz)} (${euro(b.kassenanteil)} Kasse) · ${n} Teilnehmer · Topf ${euro(pot)} · sicher Kasse ${euro(kasseLaufend)} · ${formatDateShort(b.datum)}</div>
           ${stakeLines}
           <div style="margin:8px 0;">${optionButtons}</div>
-          <button class="btn-icon" onclick="deleteBet('${id}')">Wette komplett löschen</button>
+          ${manualOptionRow}
+          <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
+            ${statusActions}
+            <button class="btn-icon" onclick="deleteBet('${id}')">Wette komplett löschen</button>
+          </div>
         </div>
       `;
     }).join("");
+  }
+
+  function closeBet(betId) {
+    if (!confirm("Annahmeschluss setzen? Es können dann keine neuen Einsätze mehr erfasst werden, bis du sie wieder öffnest.")) return;
+    betsRef.child(betId).update({ status: "geschlossen" });
+  }
+
+  function reopenBet(betId) {
+    betsRef.child(betId).update({ status: "offen" });
+  }
+
+  function addManualOption(betId) {
+    const input = document.getElementById("manualOption-" + betId);
+    const val = input.value.trim();
+    const b = bets[betId];
+    if (!b || !val) return;
+    const optionen = b.optionen ? [...b.optionen] : [];
+    if (optionen.some((o) => o.toLowerCase() === val.toLowerCase())) {
+      input.value = "";
+      return;
+    }
+    optionen.push(val);
+    betsRef.child(betId).update({ optionen });
+    input.value = "";
   }
 
   function resolveBet(betId, optionIndex) {
